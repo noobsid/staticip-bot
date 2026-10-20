@@ -1,0 +1,134 @@
+<?php
+require_once __DIR__ . '/config.php';
+require_once __DIR__ . '/db.php';
+require_once __DIR__ . '/RouterosAPI.php';
+
+function add_days(string $date, int $days): string
+{
+    return date('Y-m-d', strtotime($date . " +$days days"));
+}
+
+function today(): string
+{
+    return date('Y-m-d');
+}
+
+function normalize_ip(string $s): string
+{
+    return preg_replace('#/32$#', '', trim($s));
+}
+
+function mk_connect(): RouterosAPI
+{
+    $api = new RouterosAPI();
+    if (!$api->connect(MK_HOST, MK_USER, MK_PASS, MK_PORT)) {
+        throw new RuntimeException('Gagal login MikroTik');
+    }
+    return $api;
+}
+
+/** Cari queue berdasarkan IP pada field target (bukan nama queue). */
+function find_queue_by_ip(RouterosAPI $api, string $ip): ?array
+{
+    $needle = normalize_ip($ip);
+    foreach ($api->getSimpleQueues() as $q) {
+        $target = $q['target'] ?? '';
+        if ($target === '') {
+            continue;
+        }
+        foreach (explode(',', $target) as $t) {
+            if (normalize_ip($t) === $needle) {
+                return $q;
+            }
+        }
+    }
+    return null;
+}
+
+function set_queue_limit(RouterosAPI $api, string $ip, string $limit): bool
+{
+    $q = find_queue_by_ip($api, $ip);
+    if (!$q) {
+        return false;
+    }
+    $api->setMaxLimit($q['id'], $limit);
+    return true;
+}
+
+function isolate_user(RouterosAPI $api, array $user): bool
+{
+    return set_queue_limit($api, $user['ip'], ISOLIR_LIMIT);
+}
+
+function restore_user(RouterosAPI $api, array $user): bool
+{
+    return set_queue_limit($api, $user['ip'], $user['max_upload'] . '/' . $user['max_download']);
+}
+
+/** Panggil API Telegram apa pun. Tanpa curl_close (deprecated di PHP 8.5). */
+function tg_api(string $method, array $params = []): array
+{
+    $url = 'https://api.telegram.org/bot' . TG_BOT_TOKEN . '/' . $method;
+    if (isset($params['reply_markup']) && is_array($params['reply_markup'])) {
+        $params['reply_markup'] = json_encode($params['reply_markup']);
+    }
+    $payload = http_build_query($params);
+
+    if (function_exists('curl_init')) {
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_POST => true,
+            CURLOPT_POSTFIELDS => $payload,
+            CURLOPT_TIMEOUT => 60,
+        ]);
+        $res = curl_exec($ch);
+    } else {
+        $ctx = stream_context_create(['http' => [
+            'method' => 'POST',
+            'header' => "Content-Type: application/x-www-form-urlencoded\r\n",
+            'content' => $payload,
+            'timeout' => 60,
+        ]]);
+        $res = @file_get_contents($url, false, $ctx);
+    }
+
+    return json_decode((string)$res, true) ?: [];
+}
+
+function send_telegram(string $text): bool
+{
+    if (TG_BOT_TOKEN === '' || TG_CHAT_ID === '') {
+        return false;
+    }
+    $r = tg_api('sendMessage', ['chat_id' => TG_CHAT_ID, 'text' => $text]);
+    return ($r['ok'] ?? false) === true;
+}
+
+/**
+ * Kirim pengingat Telegram harian untuk user yang masih terisolir.
+ * Hanya mengirim jika notif_enabled=1 dan belum dikirim hari ini.
+ */
+function notify_isolated_users(PDO $db): array
+{
+    $sent = [];
+    $rows = $db->query(
+        "SELECT * FROM users
+         WHERE status = 'isolir'
+           AND notif_enabled = 1
+           AND (last_notif_sent IS NULL OR last_notif_sent < '" . today() . "')"
+    )->fetchAll();
+
+    foreach ($rows as $u) {
+        $text = "🔒 [Isolir] {$u['nama']} — IP {$u['ip']}\n"
+            . "Limit diubah ke " . ISOLIR_LIMIT . ".\n"
+            . "Tanggal isolir: {$u['tgl_isolir']}";
+
+        if (send_telegram($text)) {
+            $st = $db->prepare("UPDATE users SET last_notif_sent = ? WHERE id = ?");
+            $st->execute([today(), $u['id']]);
+            $sent[] = $u['nama'];
+        }
+    }
+    return $sent;
+}
