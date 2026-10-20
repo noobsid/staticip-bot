@@ -96,6 +96,16 @@ function tg_api(string $method, array $params = []): array
     return json_decode((string)$res, true) ?: [];
 }
 
+/** Hapus satu pesan di chat admin (prompt / pesan lama). */
+function tg_delete_message(int $message_id): bool
+{
+    if ($message_id <= 0) {
+        return false;
+    }
+    $r = tg_api('deleteMessage', ['chat_id' => ADMIN_TG_ID, 'message_id' => $message_id]);
+    return ($r['ok'] ?? false) === true;
+}
+
 function send_telegram(string $text): bool
 {
     if (TG_BOT_TOKEN === '' || TG_CHAT_ID === '') {
@@ -106,12 +116,14 @@ function send_telegram(string $text): bool
 }
 
 /**
- * Kirim pengingat Telegram harian untuk user yang masih terisolir.
- * Hanya mengirim jika notif_enabled=1 dan belum dikirim hari ini.
+ * Ambil notifikasi isolir yang belum dikirim hari ini (agregat, bukan spam pesan).
+ * last_notif_sent langsung ditandai supaya tidak dobel di hari yang sama.
+ *
+ * @return array<string,string> daftar teks notifikasi per user
  */
-function notify_isolated_users(PDO $db): array
+function take_isolated_notifications(PDO $db): array
 {
-    $sent = [];
+    $out = [];
     $rows = $db->query(
         "SELECT * FROM users
          WHERE status = 'isolir'
@@ -119,16 +131,11 @@ function notify_isolated_users(PDO $db): array
            AND (last_notif_sent IS NULL OR last_notif_sent < '" . today() . "')"
     )->fetchAll();
 
+    $mark = $db->prepare("UPDATE users SET last_notif_sent = ? WHERE id = ?");
     foreach ($rows as $u) {
-        $text = "🔒 [Isolir] {$u['nama']} — IP {$u['ip']}\n"
-            . "Limit diubah ke " . ISOLIR_LIMIT . ".\n"
-            . "Tanggal isolir: {$u['tgl_isolir']}";
-
-        if (send_telegram($text)) {
-            $st = $db->prepare("UPDATE users SET last_notif_sent = ? WHERE id = ?");
-            $st->execute([today(), $u['id']]);
-            $sent[] = $u['nama'];
-        }
+        $out[] = "🔒 {$u['nama']} ({$u['ip']}) — limit " . ISOLIR_LIMIT
+            . " · jt tempo {$u['tgl_isolir']}";
+        $mark->execute([today(), (int)$u['id']]);
     }
-    return $sent;
+    return $out;
 }
