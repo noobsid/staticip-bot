@@ -141,19 +141,19 @@ Edit `config.php`:
 define('DB_FILE', __DIR__ . '/data/app.db');
 
 // --- MikroTik (RouterOS API port 8728) ---
-define('MK_HOST', '10.2.2.1');       // IP router
-define('MK_PORT', 8728);             // port API
-define('MK_USER', 'mon');            // user MikroTik
-define('MK_PASS', 'password-router');// password MikroTik
+define('MK_HOST', '<IP-ROUTER>');     // IP router MikroTik
+define('MK_PORT', 8728);              // port API
+define('MK_USER', '<USER-MIKROTIK>'); // user MikroTik (policy api,read,write,test)
+define('MK_PASS', '<PASSWORD>');      // password MikroTik
 
 // --- Aturan isolir ---
 define('ISOLIR_DAYS', 35);           // tgl isolir = tgl bayar + N hari
 define('ISOLIR_LIMIT', '64k/64k');   // limit saat isolir (up/down)
 
 // --- Telegram ---
-define('TG_BOT_TOKEN', '123456:ABC...'); // token dari @BotFather
-define('TG_CHAT_ID', '6160850610');      // tujuan notifikasi
-define('ADMIN_TG_ID', '6160850610');     // HANYA ID ini yang boleh pakai bot
+define('TG_BOT_TOKEN', '<TOKEN-DARI-BOTFATHER>'); // token dari @BotFather
+define('TG_CHAT_ID', '<CHAT-ID-ADMIN>');          // tujuan notifikasi
+define('ADMIN_TG_ID', '<CHAT-ID-ADMIN>');         // HANYA ID ini yang boleh pakai bot
 
 date_default_timezone_set('Asia/Jakarta');
 ```
@@ -187,14 +187,14 @@ Kirim pesan ke [@userinfobot](https://t.me/userinfobot) atau [@RawDataBot](https
 Batasi akses dari IP server bot saja:
 
 ```routeros
-/ip service set api address=10.2.2.0/24
+/ip service set api address=<SUBNET-SERVER-BOT>/24
 ```
 
 ### 2. Buat user khusus (least privilege)
 
 ```routeros
 /user group add name=bot policy=api,read,write,test,winbox
-/user add name=mon group=bot password=PasswordKuat123
+/user add name=<USER-BOT> group=bot password=<PASSWORD-KUAT>
 ```
 
 > Hindari memakai user `admin`/`full` untuk bot. Cukup policy `api,read,write,test`.
@@ -204,13 +204,13 @@ Batasi akses dari IP server bot saja:
 Bot mencari queue berdasarkan **IP pada field `target`**, bukan nama queue. Jadi setiap pelanggan IP statik harus punya simple queue:
 
 ```routeros
-/queue simple add name="pelanggan-budi" target=192.168.3.54/32 max-limit=5M/5M
+/queue simple add name="pelanggan-budi" target=<IP-PELANGGAN>/32 max-limit=5M/5M
 ```
 
 Cek daftar queue:
 
 ```routeros
-/queue simple print where target~"192.168.3"
+/queue simple print where target~"<prefix-IP-pelanggan>"
 ```
 
 ### 4. Tidak perlu scheduler
@@ -267,7 +267,7 @@ Ketuk **➕ Tambah User** → form draft muncul:
 Isolir otomatis: 2026-11-24
 
 Nama: Budi
-IP: 192.168.3.54
+IP: <IP-PELANGGAN>
 Tgl Bayar: 2026-10-20
 Max Up: 5M
 Max Down: 5M
@@ -290,7 +290,7 @@ Format input:
 | Field | Format | Contoh |
 |---|---|---|
 | Nama | teks bebas | `Budi Santoso` |
-| IP | IPv4 valid, unik | `192.168.3.54` |
+| IP | IPv4 valid, unik | `<IP-PELANGGAN>` |
 | Tgl Bayar | `YYYY-MM-DD` atau `today` | `2026-10-20` |
 | Max Up / Down | format RouterOS | `5M`, `1500k`, `1G` |
 | Catatan | teks atau `-` untuk kosong | `paket 10Mbps` |
@@ -299,7 +299,7 @@ Format input:
 
 ```
 👤 Budi Santoso
-IP: 192.168.3.54
+IP: <IP-PELANGGAN>
 Status: 🟢 AKTIF
 Tgl Bayar: 2026-10-20
 Tgl Isolir: 2026-11-24
@@ -504,59 +504,8 @@ php -d display_errors=1 -d error_reporting=E_ALL bot.php
 Cek queue langsung di router:
 
 ```routeros
-/queue simple print where target~"192.168.3.54"
+/queue simple print where target~"<IP-PELANGGAN>"
 ```
-
----
-
-## Keamanan
-
-> ⚠️ **PENTING sebelum push ke GitHub:** `config.php` berisi token bot dan password MikroTik. Jangan pernah commit file itu.
-
-Gunakan `.gitignore`:
-
-```gitignore
-# Konfigurasi rahasia
-config.php
-config.local.php
-
-# Database & runtime
-data/
-*.db
-*.db-wal
-*.db-shm
-
-# Log & OS
-*.log
-.DS_Store
-Thumbs.db
-```
-
-Dan sediakan `config.example.php` sebagai template:
-
-```bash
-cp config.php config.example.php
-# lalu kosongkan token & password di config.example.php
-```
-
-Checklist keamanan:
-
-- [ ] `config.php` masuk `.gitignore`
-- [ ] Bot token & password MikroTik tidak pernah di-commit
-- [ ] `ADMIN_TG_ID` diisi satu ID saja (bot menolak chat lain)
-- [ ] User MikroTik untuk bot memakai policy minimal (`api,read,write,test`)
-- [ ] `/ip service api address=` dibatasi ke subnet server bot
-- [ ] Backup `data/app.db` berkala
-- [ ] Jika token pernah bocor: `/revoke` di @BotFather lalu ganti token
-
-Catatan model keamanan:
-
-- Bot **hanya** merespon `ADMIN_TG_ID`. Pesan & callback dari ID lain diabaikan.
-- Semua perintah SQL memakai **prepared statement** (PDO).
-- Nama field saat edit divalidasi terhadap **whitelist** (`nama`, `max_upload`, `max_download`, `catatan`) sebelum masuk ke query.
-- Perintah MikroTik hanya dua: baca queue (`/queue/simple/print`) dan set `max-limit` (`/queue/simple/set`).
-
----
 
 ## FAQ
 
