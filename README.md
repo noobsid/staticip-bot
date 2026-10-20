@@ -1,2 +1,2 @@
 # staticip-bot
-Mikrotik static ip manager telegram bot php based.
+Mikrotik static ip managed by telegram bot php based.
